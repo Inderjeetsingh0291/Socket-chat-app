@@ -9,14 +9,8 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.4.0",
-      "onFail": "download"
-    }
-  },
   "type": "module",
+  "packageManager": "pnpm@11.4.0",
   "dependencies": {
     "express": "^5.2.1",
     "socket.io": "^4.8.3"
