@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
     <title>Socket Chat — Real-time Messenger</title>
     <meta name="description" content="Real-time chat application powered by WebSockets">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -44,8 +44,14 @@
             --bg-radial: radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 60%), radial-gradient(ellipse at 100% 0%, rgba(59, 130, 246, 0.05) 0%, transparent 60%), radial-gradient(ellipse at 50% 100%, rgba(59, 130, 246, 0.03) 0%, transparent 60%), #F8FAFC;
         }
 
-        html, body {
-            height: 100%;
+        html {
+            /* Use dvh so the root tracks the visual viewport on mobile */
+            height: 100dvh;
+            height: -webkit-fill-available;
+        }
+        body {
+            height: 100dvh;
+            height: -webkit-fill-available;
             font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
             background: var(--bg-page);
             color: var(--text-primary);
@@ -91,6 +97,7 @@
         #app {
             position: relative; z-index: 1;
             width: 100%; max-width: 480px;
+            /* height is driven by JS via Visual Viewport API on mobile */
             height: 100dvh;
             display: flex; flex-direction: column;
             background: var(--bg-card);
@@ -101,6 +108,9 @@
             box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255,255,255,0.05) inset;
             overflow: hidden;
             animation: cardIn 0.7s ease-out;
+            /* Prevent content from being painted under iOS home indicator */
+            padding-bottom: env(safe-area-inset-bottom);
+            box-sizing: border-box;
         }
 
         @keyframes cardIn {
@@ -110,8 +120,12 @@
 
         /* ── Chat Screen ── */
         #chat-screen {
-            flex: 1; display: flex; flex-direction: column;
-            min-height: 0; overflow: hidden;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+            /* Establish stacking context — emoji picker uses position:fixed */
             position: relative;
         }
 
@@ -301,13 +315,18 @@
 
         /* ── Input Area ── */
         .chat-input-area {
-            display: flex; align-items: center; gap: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
             padding: 8px 10px;
-            padding-bottom: calc(8px + env(safe-area-inset-bottom));
+            /* No extra safe-area padding here — handled by #app padding-bottom */
             background: rgba(255, 255, 255, 0.95);
             border-top: 1px solid rgba(15, 23, 42, 0.07);
             backdrop-filter: blur(12px);
             flex-shrink: 0;
+            /* Ensure input bar is always at the bottom of the flex column */
+            position: relative;
+            z-index: 10;
         }
 
         #message-input {
@@ -356,16 +375,21 @@
         .icon-btn:active { transform: scale(0.92); }
 
         /* ── Emoji Picker ── */
+        /* Use position:fixed so the picker stays anchored to the
+           visual viewport (above the input bar) regardless of keyboard state */
         #emoji-picker {
-            position: absolute; bottom: 60px; left: 8px;
-            width: calc(100% - 16px); max-width: 320px;
+            position: fixed;
+            /* bottom & left are set dynamically by JS via --emoji-bottom / --emoji-left */
+            bottom: var(--emoji-bottom, 60px);
+            left: var(--emoji-left, 8px);
+            width: min(calc(100vw - 16px), 320px);
             background: #FFFFFF;
             border: 1px solid var(--border);
             border-radius: 16px;
             box-shadow: var(--shadow-lg);
             padding: 10px;
             display: none; flex-direction: column; gap: 6px;
-            z-index: 50;
+            z-index: 200;
             animation: fadeSlideIn 0.2s ease-out;
         }
         #emoji-picker.open { display: flex; }
@@ -477,16 +501,18 @@
             body { align-items: stretch; }
             #app {
                 max-width: 100%;
+                /* height is controlled by the Visual Viewport JS; fall back to 100dvh */
                 height: 100dvh;
                 border-radius: 0;
                 border: none;
+                padding-bottom: env(safe-area-inset-bottom);
             }
             .chat-header { padding: 10px 14px; }
             #messages { padding: 8px 10px 4px; }
             .chat-input-area { padding: 6px 8px; gap: 5px; }
             .message { font-size: 13.5px; max-width: 80%; }
             .msg-image { max-width: 200px; }
-            #emoji-picker { width: calc(100% - 16px); max-width: 100%; }
+            #emoji-picker { width: min(calc(100vw - 16px), 100%); }
         }
         @media (max-width: 400px) {
             .message { font-size: 13px; max-width: 85%; }
@@ -937,14 +963,77 @@
     });
     renderEmojiGrid(catIcons[0]);
 
+    // ── Position emoji picker just above the input bar (fixed viewport coords) ──
+    function positionEmojiPicker() {
+        const inputRect = document.querySelector('.chat-input-area').getBoundingClientRect();
+        const pickerH   = emojiPicker.offsetHeight || 240;
+        const vvH       = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        const vvLeft    = window.visualViewport ? window.visualViewport.offsetLeft : 0;
+
+        // Bottom edge of picker = top of input bar (in viewport coords)
+        const bottom = vvH - inputRect.top + 6;
+        const left   = inputRect.left + vvLeft + 8;
+
+        emojiPicker.style.setProperty('--emoji-bottom', bottom + 'px');
+        emojiPicker.style.setProperty('--emoji-left',   left   + 'px');
+        // Override the CSS vars directly on the element
+        emojiPicker.style.bottom = bottom + 'px';
+        emojiPicker.style.left   = left   + 'px';
+    }
+
     emojiBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        const willOpen = !emojiPicker.classList.contains('open');
         emojiPicker.classList.toggle('open');
+        if (willOpen) positionEmojiPicker();
     });
     document.addEventListener('click', (e) => {
         if (!emojiPicker.contains(e.target) && e.target !== emojiBtn)
             emojiPicker.classList.remove('open');
     });
+
+    // ── Visual Viewport API — WhatsApp-style keyboard resize ──
+    // Only activate on mobile (touch) devices
+    const isMobile = window.matchMedia('(max-width: 600px)').matches ||
+                     ('ontouchstart' in window && navigator.maxTouchPoints > 0);
+
+    if (isMobile && window.visualViewport) {
+        const appEl = document.getElementById('app');
+
+        function onViewportResize() {
+            const vv = window.visualViewport;
+            // Shrink the app shell to exactly the visible viewport height.
+            // This collapses the messages area (which has flex:1 + overflow:auto)
+            // while keeping the input bar fixed at the bottom — just like WhatsApp.
+            appEl.style.height = vv.height + 'px';
+
+            // Compensate for any horizontal/vertical offset introduced by the browser
+            // (e.g. iOS Safari pans the page when the keyboard opens)
+            appEl.style.transform =
+                `translateY(${vv.offsetTop}px) translateX(${vv.offsetLeft}px)`;
+
+            // Re-position emoji picker if it's open
+            if (emojiPicker.classList.contains('open')) positionEmojiPicker();
+
+            // Always keep the latest message in view
+            scrollToBottom();
+        }
+
+        window.visualViewport.addEventListener('resize', onViewportResize);
+        window.visualViewport.addEventListener('scroll', onViewportResize);
+
+        // Run once on load to set initial state
+        onViewportResize();
+    } else if (isMobile) {
+        // Fallback for browsers without Visual Viewport API (older Android WebView)
+        // Use window resize event as a proxy
+        const appEl = document.getElementById('app');
+        window.addEventListener('resize', () => {
+            appEl.style.height = window.innerHeight + 'px';
+            scrollToBottom();
+        });
+        appEl.style.height = window.innerHeight + 'px';
+    }
 </script>
 
 </body>
